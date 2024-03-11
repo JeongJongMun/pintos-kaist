@@ -95,7 +95,11 @@ struct thread {
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
-
+	/* For Priority Donation */
+	struct list donations;     // 해당 스레드에게 기부를 해준 스레드
+	struct list_elem d_elem;   // donations 리스트를 위한 list_elem
+	struct lock *wait_on_lock; // 기다리고 있는 잠금
+	int original_priority;     // 기부를 받기 전의 기존 우선순위
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
@@ -143,5 +147,10 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+void thread_sleep(int64_t ticks);
+void thread_wakeup(int64_t ticks);
+bool less_wakeup_ticks(const struct list_elem *a, const struct list_elem *b, void *aux);
+bool higher_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 #endif /* threads/thread.h */
