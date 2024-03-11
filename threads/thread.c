@@ -28,6 +28,11 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+/* THREAD_BLOCKED 상태의 스레드 리스트, 즉 실행할 준비가 되지 않은 스레드의 리스트
+ * wakeup_tick을 기준으로 오름차순 정렬되어 있다.
+ */
+static struct list sleep_list;
+
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -108,6 +113,7 @@ thread_init (void) {
 	/* Init the globla thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
+	list_init(&sleep_list);
 	list_init (&destruction_req);
 
 	/* Set up a thread structure for the running thread. */
@@ -587,4 +593,68 @@ allocate_tid (void) {
 	lock_release (&tid_lock);
 
 	return tid;
+}
+
+/* higher_priority - ready_list를 우선순위 내림차순으로 정렬하기 위한 비교 함수.
+ */
+bool higher_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+	struct thread *ta = list_entry(a, struct thread, elem);
+	struct thread *tb = list_entry(b, struct thread, elem);
+	return ta->priority > tb->priority;
+}
+
+/* less_wakeup_ticks - sleep_list를 정렬하기 위한 비교 함수.
+ */
+bool less_wakeup_ticks(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+	struct thread *ta = list_entry(a, struct thread, elem);
+	struct thread *tb = list_entry(b, struct thread, elem);
+	return ta->wakeup_ticks < tb->wakeup_ticks;
+}
+
+/* thread_sleep - 현재 실행 중인 스레드들 재운다.
+ * sleep_list에 wakeup_ticks 기준으로 오름차순으로 삽입하고 스레드의 상태를 BLOCKED로 전환한다
+ * thread_block() 내부적으로 schedule()을 호출하여 스케줄링을 수행한다.
+ * Idle 스레드는 thread_sleep()을 호출할 수 없다.
+ * 스레드 리스트를 조작할때, 인터럽트를 비활성화하고 조작이 끝나면 다시 활성화해야 한다.
+ */
+void thread_sleep(int64_t ticks)
+{
+	enum intr_level old_level = intr_disable();
+	struct thread *t = thread_current();
+
+	ASSERT(t != idle_thread);
+
+	t->wakeup_ticks = ticks;
+	list_insert_ordered(&sleep_list, &t->elem, (list_less_func *)less_wakeup_ticks, NULL);
+	thread_block();
+	intr_set_level(old_level);
+}
+
+/* thread_wakeup - 잠들어 있는 스레드를 깨운다.
+ * sleep_list를 순회하면서 wakeup_ticks이 현재 os_ticks보다 작아진 스레드를 깨운다.
+ * sleep_list는 wakeup_ticks 기준으로 오름차순으로 정렬되어 있다.
+ * 깨어난 스레드는 READY 상태로 전환되고 ready_list에 priority 기준으로 내림차순 삽입된다.
+ * 
+ * 이 함수는 타이머 인터럽트 핸들러에서 호출된다. 따라서 이 함수는 외부 인터럽트 컨텍스트에서 실행된다.
+ * 스레드 리스트를 조작할때, 인터럽트를 비활성화하고 조작이 끝나면 다시 활성화해야 한다.
+ */
+void thread_wakeup(int64_t os_ticks)
+{
+	if (list_empty(&sleep_list))
+		return;
+	enum intr_level old_level = intr_disable();
+	struct thread *t;
+
+	while (!list_empty(&sleep_list))
+	{
+		t = list_entry(list_front(&sleep_list), struct thread, elem);
+		if (t->wakeup_ticks > os_ticks)
+			break;
+		list_pop_front(&sleep_list);
+		list_insert_ordered(&ready_list, &t->elem, (list_less_func *)higher_priority, NULL);
+		t->status = THREAD_READY;
+	}
+	intr_set_level(old_level);
 }
