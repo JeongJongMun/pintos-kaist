@@ -197,7 +197,7 @@ lock_acquire (struct lock *lock) {
 
 	if (lock->holder != NULL) {
 		t->wait_on_lock = lock;
-		if (thread_get_priority() > lock->holder->priority) {
+		if (thread_get_priority() > lock->holder->priority && !thread_mlfqs) {
 			list_insert_ordered(&lock->holder->donations, &t->d_elem, (list_less_func *)&higher_priority, NULL);
 			while (t->wait_on_lock != NULL) {
 				holder = t->wait_on_lock->holder;
@@ -257,12 +257,13 @@ lock_release (struct lock *lock) {
 			list_remove(e);
 	}
 
-	if (!list_empty(&lock_holder->donations)) {
-		lock_holder->priority = list_entry(list_front(&lock_holder->donations), struct thread, d_elem)->priority;
+	if (!thread_mlfqs) {
+		if (!list_empty(&lock_holder->donations)) {
+			lock_holder->priority = list_entry(list_front(&lock_holder->donations), struct thread, d_elem)->priority;
+		}
+		else
+			lock_holder->priority = lock_holder->original_priority;
 	}
-	else
-		lock_holder->priority = lock_holder->original_priority;
-
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
 }
